@@ -61,9 +61,10 @@ const Chat = ({
   functionCallHandler = () => Promise.resolve(""), // default to return empty string
 }: ChatProps) => {
   const [userInput, setUserInput] = useState("");
-  const [messages, setMessages] = useState([]);
+  const [messages, setMessages] = useState<MessageProps[]>([]);
   const [inputDisabled, setInputDisabled] = useState(false);
   const [threadId, setThreadId] = useState("");
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   // automatically scroll to bottom of chat
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -86,39 +87,65 @@ const Chat = ({
     createThread();
   }, []);
 
-  const sendMessage = async (text) => {
-    const response = await fetch(
-      `/api/assistants/threads/${threadId}/messages`,
-      {
-        method: "POST",
-        body: JSON.stringify({
-          content: text,
-        }),
+  const sendMessage = async (text: string) => {
+    abortControllerRef.current = new AbortController();
+    const { signal } = abortControllerRef.current;
+
+    try {
+      const response = await fetch(
+        `/api/assistants/threads/${threadId}/messages`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            content: text,
+          }),
+          signal,
+          keepalive: true,
+        }
+      );
+      const stream = AssistantStream.fromReadableStream(response.body);
+      handleReadableStream(stream);
+    } catch (error) {
+      if (error.name === 'AbortError') {
+        console.log('Fetch aborted');
+      } else {
+        console.error('Error:', error);
       }
-    );
-    const stream = AssistantStream.fromReadableStream(response.body);
-    handleReadableStream(stream);
+    }
   };
 
-  const submitActionResult = async (runId, toolCallOutputs) => {
-    const response = await fetch(
-      `/api/assistants/threads/${threadId}/actions`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          runId: runId,
-          toolCallOutputs: toolCallOutputs,
-        }),
+  const submitActionResult = async (runId: string, toolCallOutputs: any[]) => {
+    abortControllerRef.current = new AbortController();
+    const { signal } = abortControllerRef.current;
+
+    try {
+      const response = await fetch(
+        `/api/assistants/threads/${threadId}/actions`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            runId: runId,
+            toolCallOutputs: toolCallOutputs,
+          }),
+          signal,
+          keepalive: true,
+        }
+      );
+      const stream = AssistantStream.fromReadableStream(response.body);
+      handleReadableStream(stream);
+    } catch (error) {
+      if (error.name === 'AbortError') {
+        console.log('Fetch aborted');
+      } else {
+        console.error('Error:', error);
       }
-    );
-    const stream = AssistantStream.fromReadableStream(response.body);
-    handleReadableStream(stream);
+    }
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!userInput.trim()) return;
     sendMessage(userInput);
@@ -139,28 +166,28 @@ const Chat = ({
   };
 
   // textDelta - append text to last assistant message
-  const handleTextDelta = (delta) => {
+  const handleTextDelta = (delta: any) => {
     if (delta.value != null) {
       appendToLastMessage(delta.value);
-    };
+    }
     if (delta.annotations != null) {
       annotateLastMessage(delta.annotations);
     }
   };
 
   // imageFileDone - show image in chat
-  const handleImageFileDone = (image) => {
+  const handleImageFileDone = (image: any) => {
     appendToLastMessage(`\n![${image.file_id}](/api/files/${image.file_id})\n`);
-  }
+  };
 
   // toolCallCreated - log new tool call
-  const toolCallCreated = (toolCall) => {
+  const toolCallCreated = (toolCall: any) => {
     if (toolCall.type != "code_interpreter") return;
     appendMessage("code", "");
   };
 
   // toolCallDelta - log delta and snapshot for the tool call
-  const toolCallDelta = (delta, snapshot) => {
+  const toolCallDelta = (delta: any, snapshot: any) => {
     if (delta.type != "code_interpreter") return;
     if (!delta.code_interpreter.input) return;
     appendToLastMessage(delta.code_interpreter.input);
@@ -214,7 +241,7 @@ const Chat = ({
     =======================
   */
 
-  const appendToLastMessage = (text) => {
+  const appendToLastMessage = (text: string) => {
     setMessages((prevMessages) => {
       const lastMessage = prevMessages[prevMessages.length - 1];
       const updatedLastMessage = {
@@ -225,11 +252,11 @@ const Chat = ({
     });
   };
 
-  const appendMessage = (role, text) => {
+  const appendMessage = (role: "user" | "assistant" | "code", text: string) => {
     setMessages((prevMessages) => [...prevMessages, { role, text }]);
   };
 
-  const annotateLastMessage = (annotations) => {
+  const annotateLastMessage = (annotations: any[]) => {
     setMessages((prevMessages) => {
       const lastMessage = prevMessages[prevMessages.length - 1];
       const updatedLastMessage = {
@@ -242,11 +269,10 @@ const Chat = ({
             `/api/files/${annotation.file_path.file_id}`
           );
         }
-      })
+      });
       return [...prevMessages.slice(0, -1), updatedLastMessage];
     });
-    
-  }
+  };
 
   return (
     <div className={styles.chatContainer}>
